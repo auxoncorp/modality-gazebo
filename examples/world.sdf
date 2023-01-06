@@ -60,7 +60,7 @@
           filename='ModalityTracingPlugin'>
           <enabled>true</enabled>
           <!-- <auth_token>YOUR_AUTH_TOKEN_HEX_HERE</auth_token> -->
-          <timeline_name>box</timeline_name>
+          <timeline_name>my-box</timeline_name>
           <allow_insecure_tls>true</allow_insecure_tls>
           <modalityd_url>modality-ingest://localhost:14182</modalityd_url>
           <link_name>box_link</link_name>

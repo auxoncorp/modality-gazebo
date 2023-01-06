@@ -26,6 +26,18 @@ using namespace modality;
 
 #define NS_PER_SEC (1000000000ULL)
 
+const char ENV_AUTH_TOKEN[] = "MODALITY_AUTH_TOKEN";
+const char ENV_RUN_ID[] = "MODALITY_RUN_ID";
+
+const char SDF_LINK_NAME[] = "link_name";
+const char SDF_AUTH_TOKEN[] = "auth_token";
+const char SDF_TIMELINE_NAME[] = "timeline_name";
+const char SDF_INSECURE_TLS[] = "allow_insecure_tls";
+const char SDF_MODALITYD_URL[] = "modalityd_url";
+const char SDF_TRACE_POSE[] = "pose";
+const char SDF_TRACE_LIN_ACCEL[] = "linear_acceleration";
+const char SDF_TRACE_LIN_VEL[] = "linear_velocity";
+
 const char EVENT_NAME_POSE[] = "pose";
 const char EVENT_NAME_LINEAR_VEL[] = "linear_velocity";
 const char EVENT_NAME_LINEAR_ACCEL[] = "linear_acceleration";
@@ -77,19 +89,23 @@ class modality_gz::TracingPrivate
     public:
         ignition::gazebo::Entity entity;
         std::chrono::steady_clock::duration current_time;
-        bool tracing_enabled;
-        bool trace_pose;
-        bool trace_linear_accel;
-        bool trace_linear_vel;
-        bool allow_insecure_tls;
+
+        bool tracing_enabled{true};
+        bool trace_pose{true};
+        bool trace_linear_accel{true};
+        bool trace_linear_vel{true};
+        bool allow_insecure_tls{true};
+
         std::string auth_token;
         std::string timeline_name;
-        std::string modalityd_url;
+        std::string modalityd_url{"modality-ingest://localhost:14182"};
         std::string link_name;
         std::string run_id;
-        uint64_t ordering;
-        struct modality_runtime *rt;
-        struct modality_ingest_client *client;
+
+        uint64_t ordering{0};
+        struct modality_runtime *rt{NULL};
+        struct modality_ingest_client *client{NULL};
+
         modality_timeline_id tid;
         modality_attr timeline_attrs[NUM_TIMELINE_ATTRS];
         modality_attr event_attrs[NUM_EVENT_ATTRS];
@@ -119,13 +135,6 @@ void TracingPrivate::DeInit(void)
 
 Tracing::Tracing(): data_ptr(std::make_unique < TracingPrivate > ())
 {
-    this->data_ptr->tracing_enabled = true;
-    this->data_ptr->trace_pose = true;
-    this->data_ptr->trace_linear_accel = true;
-    this->data_ptr->trace_linear_vel = true;
-    this->data_ptr->rt = NULL;
-    this->data_ptr->client = NULL;
-    this->data_ptr->ordering = 0;
 }
 
 Tracing::~Tracing()
@@ -150,39 +159,33 @@ void Tracing::Configure(
     // Load up configs from the SDF
     if(this->data_ptr->tracing_enabled)
     {
-        auto sdf_link_name = sdf->Get<std::string>("link_name", "");
-        if(!sdf_link_name.second)
+        if(sdf->HasElement(SDF_LINK_NAME))
         {
-            ignerr << "Missing key 'link_name'" << std::endl;
-            this->data_ptr->DeInit();
+            this->data_ptr->link_name = sdf->Get<std::string>(SDF_LINK_NAME);
         }
         else
         {
-            this->data_ptr->link_name = sdf_link_name.first;
+            ignerr << "Missing key '" << SDF_LINK_NAME << "'" << std::endl;
+            this->data_ptr->DeInit();
         }
-        
-        if(const char *auth_token_env = std::getenv("MODALITY_AUTH_TOKEN"))
+
+        if(const char *auth_token_env = std::getenv(ENV_AUTH_TOKEN))
         {
             this->data_ptr->auth_token = auth_token_env;
         }
+        else if(sdf->HasElement(SDF_AUTH_TOKEN))
+        {
+            this->data_ptr->auth_token = sdf->Get<std::string>(SDF_AUTH_TOKEN);
+        }
         else
         {
-            auto sdf_auth_token = sdf->Get<std::string>("auth_token", "");
-            if(!sdf_auth_token.second)
-            {
-                ignerr << "Missing key 'auth_token'" << std::endl;
-                this->data_ptr->DeInit();
-            }
-            else
-            {
-                this->data_ptr->auth_token = sdf_auth_token.first;
-            }
+            ignerr << "Missing key '" << SDF_AUTH_TOKEN << "'" << std::endl;
+            this->data_ptr->DeInit();
         }
 
-        auto sdf_timeline_name = sdf->Get<std::string>("timeline_name", "");
-        if(sdf_timeline_name.second)
+        if(sdf->HasElement(SDF_TIMELINE_NAME))
         {
-            this->data_ptr->timeline_name = sdf_timeline_name.first;
+            this->data_ptr->timeline_name = sdf->Get<std::string>(SDF_TIMELINE_NAME);
         }
         else
         {
@@ -190,20 +193,30 @@ void Tracing::Configure(
             this->data_ptr->timeline_name = ignition::gazebo::scopedName(entity, ecm, "::", false);
         }
 
-        auto sdf_allow_insecure_tls = sdf->Get<bool>("allow_insecure_tls", true);
-        this->data_ptr->allow_insecure_tls = sdf_allow_insecure_tls.first;
+        if(sdf->HasElement(SDF_INSECURE_TLS))
+        {
+            this->data_ptr->allow_insecure_tls = sdf->Get<bool>(SDF_INSECURE_TLS);
+        }
 
-        auto sdf_modalityd_url = sdf->Get<std::string>("modalityd_url", "modality-ingest://localhost:14182");
-        this->data_ptr->modalityd_url = sdf_modalityd_url.first;
+        if(sdf->HasElement(SDF_MODALITYD_URL))
+        {
+            this->data_ptr->modalityd_url = sdf->Get<std::string>(SDF_MODALITYD_URL);
+        }
 
-        auto sdf_trace_pose = sdf->Get<bool>("pose", true);
-        this->data_ptr->trace_pose = sdf_trace_pose.first;
+        if(sdf->HasElement(SDF_TRACE_POSE))
+        {
+            this->data_ptr->trace_pose = sdf->Get<bool>(SDF_TRACE_POSE);
+        }
 
-        auto sdf_trace_linear_accel = sdf->Get<bool>("linear_acceleration", true);
-        this->data_ptr->trace_linear_accel = sdf_trace_linear_accel.first;
+        if(sdf->HasElement(SDF_TRACE_LIN_ACCEL))
+        {
+            this->data_ptr->trace_linear_accel = sdf->Get<bool>(SDF_TRACE_LIN_ACCEL);
+        }
 
-        auto sdf_trace_linear_vel = sdf->Get<bool>("linear_velocity", true);
-        this->data_ptr->trace_linear_vel = sdf_trace_linear_vel.first;
+        if(sdf->HasElement(SDF_TRACE_LIN_VEL))
+        {
+            this->data_ptr->trace_linear_vel = sdf->Get<bool>(SDF_TRACE_LIN_VEL);
+        }
     }
 
     // Setup the client if config checks out
@@ -260,7 +273,7 @@ void Tracing::Configure(
         err = modality_attr_val_set_string(&this->data_ptr->timeline_attrs[TID_IDX_NAME].val, this->data_ptr->timeline_name.c_str());
         this->data_ptr->HandleClientError(err, "Failed to set timeline attribute value");
 
-        if(const char *run_id_env = std::getenv("MODALITY_RUN_ID"))
+        if(const char *run_id_env = std::getenv(ENV_RUN_ID))
         {
             this->data_ptr->run_id = run_id_env;
         }
