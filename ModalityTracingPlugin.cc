@@ -1,11 +1,11 @@
 #include <cstdlib>
 
-#include <ignition/plugin/Register.hh>
-#include <ignition/gazebo/Util.hh>
-#include <ignition/gazebo/Model.hh>
-#include <ignition/gazebo/Link.hh>
-#include <ignition/math.hh>
-#include <ignition/common/Uuid.hh>
+#include <gz/plugin/Register.hh>
+#include <gz/sim/Util.hh>
+#include <gz/sim/Model.hh>
+#include <gz/sim/Link.hh>
+#include <gz/math.hh>
+#include <gz/common/Uuid.hh>
 
 #include "ModalityTracingPlugin.hh"
 
@@ -15,9 +15,9 @@
 #include "modality/tracing_subscriber.hpp"
 #include "modality/ingest_client.hpp"
 
-IGNITION_ADD_PLUGIN(
+GZ_ADD_PLUGIN(
     modality_gz::Tracing,
-    ignition::gazebo::System,
+    gz::sim::System,
     modality_gz::Tracing::ISystemConfigure,
     modality_gz::Tracing::ISystemPostUpdate)
 
@@ -87,7 +87,7 @@ class modality_gz::TracingPrivate
     public: void DeInit(void);
 
     public:
-        ignition::gazebo::Entity entity;
+        gz::sim::Entity entity;
         std::chrono::steady_clock::duration current_time;
 
         bool tracing_enabled{true};
@@ -143,10 +143,10 @@ Tracing::~Tracing()
 }
 
 void Tracing::Configure(
-  const ignition::gazebo::Entity & entity,
+  const gz::sim::Entity & entity,
   const std::shared_ptr < const sdf::Element > & sdf,
-  ignition::gazebo::EntityComponentManager & ecm,
-  ignition::gazebo::EventManager &)
+  gz::sim::EntityComponentManager & ecm,
+  gz::sim::EventManager &)
 {
     int err;
     int i;
@@ -190,7 +190,7 @@ void Tracing::Configure(
         else
         {
             // Use scoped entity name for the timeline name if not explicitly provided
-            this->data_ptr->timeline_name = ignition::gazebo::scopedName(entity, ecm, "::", false);
+            this->data_ptr->timeline_name = gz::sim::scopedName(entity, ecm, "::", false);
         }
 
         if(sdf->HasElement(SDF_INSECURE_TLS))
@@ -223,8 +223,8 @@ void Tracing::Configure(
     if(this->data_ptr->tracing_enabled)
     {
         // Enable velocity/acceleration checks for the link, also means it'll have pose too
-        ignition::gazebo::Model model{this->data_ptr->entity};
-        ignition::gazebo::Link link{model.LinkByName(ecm, this->data_ptr->link_name)};
+        gz::sim::Model model{this->data_ptr->entity};
+        gz::sim::Link link{model.LinkByName(ecm, this->data_ptr->link_name)};
         link.EnableVelocityChecks(ecm, true);
         link.EnableAccelerationChecks(ecm, true);
 
@@ -279,7 +279,7 @@ void Tracing::Configure(
         }
         else
         {
-            auto uuid_run_id = ignition::common::Uuid();
+            auto uuid_run_id = gz::common::Uuid();
             this->data_ptr->run_id = uuid_run_id.String();
         }
         err = modality_attr_val_set_string(&this->data_ptr->timeline_attrs[TID_IDX_RUN_ID].val, this->data_ptr->run_id.c_str());
@@ -291,8 +291,8 @@ void Tracing::Configure(
 }
 
 void Tracing::PostUpdate(
-        const ignition::gazebo::UpdateInfo &info,
-        const ignition::gazebo::EntityComponentManager &ecm)
+        const gz::sim::UpdateInfo &info,
+        const gz::sim::EntityComponentManager &ecm)
 {
     int err;
 
@@ -305,10 +305,10 @@ void Tracing::PostUpdate(
         return;
     }
 
-    ignition::gazebo::Model model{this->data_ptr->entity};
-    ignition::gazebo::Link link{model.LinkByName(ecm, this->data_ptr->link_name)};
+    gz::sim::Model model{this->data_ptr->entity};
+    gz::sim::Link link{model.LinkByName(ecm, this->data_ptr->link_name)};
 
-    auto sec_nsec = ignition::math::durationToSecNsec(info.simTime);
+    auto sec_nsec = gz::math::durationToSecNsec(info.simTime);
     uint64_t ts_ns = ((uint64_t) sec_nsec.first) * NS_PER_SEC;
     ts_ns += (uint64_t) sec_nsec.second;
     this->data_ptr->current_time = info.simTime;
