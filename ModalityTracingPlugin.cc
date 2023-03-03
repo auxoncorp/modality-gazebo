@@ -56,14 +56,18 @@ const char ERR_EVENT_SEND[] = "Failed to send event";
 #define TID_IDX_RUN_ID (0)
 #define TID_IDX_NAME (1)
 #define TID_IDX_TIME_DOMAIN (2)
-#define TID_IDX_LINK_NAME (3)
-#define TID_IDX_LINK_ENTITY (4)
-#define NUM_TIMELINE_ATTRS (5)
+#define TID_IDX_MODEL_NAME (3)
+#define TID_IDX_MODEL_ENTITY (4)
+#define TID_IDX_LINK_NAME (5)
+#define TID_IDX_LINK_ENTITY (6)
+#define NUM_TIMELINE_ATTRS (7)
 static const char *TIMELINE_ATTR_KEYS[] =
 {
     "timeline.run_id",
     "timeline.name",
     "timeline.time_domain",
+    "timeline.internal.gazebo.model.name",
+    "timeline.internal.gazebo.model.entity",
     "timeline.internal.gazebo.link.name",
     "timeline.internal.gazebo.link.entity",
 };
@@ -120,10 +124,12 @@ class modality_gz::TracingPrivate
         std::string auth_token;
         std::string timeline_name;
         std::string modalityd_url{"modality-ingest://localhost:14182"};
+        std::string model_name;
         std::string link_name;
         std::string run_id;
 
         struct modality_big_int link_entity;
+        struct modality_big_int model_entity;
         uint64_t ordering{0};
         struct modality_runtime *rt{NULL};
         struct modality_ingest_client *client{NULL};
@@ -174,6 +180,7 @@ void Tracing::Configure(
     int i;
 
     this->data_ptr->entity = entity;
+    this->data_ptr->model_name = gz::sim::scopedName(entity, ecm, "::", false);
 
     auto sdf_tracing_enabled = sdf->Get<bool>("enabled", true);
     this->data_ptr->tracing_enabled = sdf_tracing_enabled.first;
@@ -326,6 +333,14 @@ void Tracing::Configure(
         err = modality_attr_val_set_string(&this->data_ptr->timeline_attrs[TID_IDX_TIME_DOMAIN].val, TIME_DOMAIN);
         this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
 
+        err = modality_attr_val_set_string(&this->data_ptr->timeline_attrs[TID_IDX_MODEL_NAME].val, this->data_ptr->model_name.c_str());
+        this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
+
+        err = modality_big_int_set(&this->data_ptr->model_entity, this->data_ptr->entity, 0);
+        this->data_ptr->HandleClientError(err, "Failed to set model entity big int value");
+        err = modality_attr_val_set_big_int(&this->data_ptr->timeline_attrs[TID_IDX_MODEL_ENTITY].val, &this->data_ptr->model_entity);
+        this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
+
         err = modality_attr_val_set_string(&this->data_ptr->timeline_attrs[TID_IDX_LINK_NAME].val, this->data_ptr->link_name.c_str());
         this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
 
@@ -359,6 +374,8 @@ void Tracing::PostUpdate(
     gz::sim::Model model{this->data_ptr->entity};
     gz::sim::Link link{model.LinkByName(ecm, this->data_ptr->link_name)};
 
+    bool model_is_static = model.Static(ecm);
+
     auto sec_nsec = gz::math::durationToSecNsec(info.simTime);
     uint64_t ts_ns = ((uint64_t) sec_nsec.first) * NS_PER_SEC;
     ts_ns += (uint64_t) sec_nsec.second;
@@ -367,7 +384,6 @@ void Tracing::PostUpdate(
     err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs[EID_IDX_TIMESTAMP].val, ts_ns);
     this->data_ptr->HandleClientError(err, "Failed to set event timestamp attribute value");
 
-    // TODO - do optimization for static=true entities
     if(this->data_ptr->trace_pose)
     {
         if(auto maybe_pose = link.WorldPose(ecm))
@@ -399,6 +415,12 @@ void Tracing::PostUpdate(
             this->data_ptr->HandleClientError(err, ERR_EVENT_SEND);
 
             this->data_ptr->ordering += 1;
+
+            // Log once if static
+            if(model_is_static)
+            {
+                this->data_ptr->trace_pose = false;
+            }
         }
         else
         {
@@ -430,6 +452,12 @@ void Tracing::PostUpdate(
             this->data_ptr->HandleClientError(err, ERR_EVENT_SEND);
 
             this->data_ptr->ordering += 1;
+
+            // Log once if static
+            if(model_is_static)
+            {
+                this->data_ptr->trace_linear_vel = false;
+            }
         }
         else
         {
@@ -461,6 +489,12 @@ void Tracing::PostUpdate(
             this->data_ptr->HandleClientError(err, ERR_EVENT_SEND);
 
             this->data_ptr->ordering += 1;
+
+            // Log once if static
+            if(model_is_static)
+            {
+                this->data_ptr->trace_linear_accel = false;
+            }
         }
         else
         {
@@ -471,38 +505,41 @@ void Tracing::PostUpdate(
     if(this->data_ptr->trace_contact_collision)
     {
         auto contacts = ecm.Component<gz::sim::components::ContactSensorData>(this->data_ptr->collision_entity);
-        if(contacts->Data().contact_size() > 0)
+        if(contacts != NULL) 
         {
-            err = modality_attr_val_set_string(&this->data_ptr->event_attrs[EID_IDX_NAME].val, EVENT_NAME_CONTACT);
-            this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
-        }
-
-        for(const auto &contact : contacts->Data().contact())
-        {
-            if(contact.has_collision2())
+            if(contacts->Data().contact_size() > 0)
             {
-                auto other_col_entity = contact.collision2();
-                auto other_name = gz::sim::scopedName(other_col_entity.id(), ecm, "::");
-
-                err = modality_attr_val_set_string(&this->data_ptr->event_attrs[EID_IDX_COLLISION_NAME].val, other_name.c_str());
+                err = modality_attr_val_set_string(&this->data_ptr->event_attrs[EID_IDX_NAME].val, EVENT_NAME_CONTACT);
                 this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
+            }
 
-                struct modality_big_int other_col_entity_id;
-                err = modality_big_int_set(&other_col_entity_id, other_col_entity.id(), 0);
-                this->data_ptr->HandleClientError(err, "Failed to set contact collision entity big int value");
+            for(const auto &contact : contacts->Data().contact())
+            {
+                if(contact.has_collision2())
+                {
+                    auto other_col_entity = contact.collision2();
+                    auto other_name = gz::sim::scopedName(other_col_entity.id(), ecm, "::");
 
-                err = modality_attr_val_set_big_int(&this->data_ptr->event_attrs[EID_IDX_COLLISION_ENTITY].val, &other_col_entity_id);
-                this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
+                    err = modality_attr_val_set_string(&this->data_ptr->event_attrs[EID_IDX_COLLISION_NAME].val, other_name.c_str());
+                    this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
 
-                err = modality_ingest_client_event(
-                        this->data_ptr->client,
-                        this->data_ptr->ordering,
-                        0,
-                        &this->data_ptr->event_attrs[EID_IDX_COLLISION_NAME],
-                        NUM_EVENT_ATTRS_CONTACT);
-                this->data_ptr->HandleClientError(err, ERR_EVENT_SEND);
+                    struct modality_big_int other_col_entity_id;
+                    err = modality_big_int_set(&other_col_entity_id, other_col_entity.id(), 0);
+                    this->data_ptr->HandleClientError(err, "Failed to set contact collision entity big int value");
 
-                this->data_ptr->ordering += 1;
+                    err = modality_attr_val_set_big_int(&this->data_ptr->event_attrs[EID_IDX_COLLISION_ENTITY].val, &other_col_entity_id);
+                    this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
+
+                    err = modality_ingest_client_event(
+                            this->data_ptr->client,
+                            this->data_ptr->ordering,
+                            0,
+                            &this->data_ptr->event_attrs[EID_IDX_COLLISION_NAME],
+                            NUM_EVENT_ATTRS_CONTACT);
+                    this->data_ptr->HandleClientError(err, ERR_EVENT_SEND);
+
+                    this->data_ptr->ordering += 1;
+                }
             }
         }
     }
