@@ -30,6 +30,7 @@ using namespace modality;
 #define NS_PER_SEC (1000000000ULL)
 
 const char TIME_DOMAIN[] = "gazebo-clock";
+const char CLOCK_STYLE[] = "relative";
 
 const char ENV_AUTH_TOKEN[] = "MODALITY_AUTH_TOKEN";
 const char ENV_RUN_ID[] = "MODALITY_RUN_ID";
@@ -56,16 +57,18 @@ const char ERR_EVENT_SEND[] = "Failed to send event";
 #define TID_IDX_RUN_ID (0)
 #define TID_IDX_NAME (1)
 #define TID_IDX_TIME_DOMAIN (2)
-#define TID_IDX_MODEL_NAME (3)
-#define TID_IDX_MODEL_ENTITY (4)
-#define TID_IDX_LINK_NAME (5)
-#define TID_IDX_LINK_ENTITY (6)
-#define NUM_TIMELINE_ATTRS (7)
+#define TID_IDX_CLOCK_STYLE (3)
+#define TID_IDX_MODEL_NAME (4)
+#define TID_IDX_MODEL_ENTITY (5)
+#define TID_IDX_LINK_NAME (6)
+#define TID_IDX_LINK_ENTITY (7)
+#define NUM_TIMELINE_ATTRS (8)
 static const char *TIMELINE_ATTR_KEYS[] =
 {
     "timeline.run_id",
     "timeline.name",
     "timeline.time_domain",
+    "timeline.clock_style",
     "timeline.internal.gazebo.model.name",
     "timeline.internal.gazebo.model.entity",
     "timeline.internal.gazebo.link.name",
@@ -333,6 +336,9 @@ void Tracing::Configure(
         err = modality_attr_val_set_string(&this->data_ptr->timeline_attrs[TID_IDX_TIME_DOMAIN].val, TIME_DOMAIN);
         this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
 
+        err = modality_attr_val_set_string(&this->data_ptr->timeline_attrs[TID_IDX_CLOCK_STYLE].val, CLOCK_STYLE);
+        this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
+
         err = modality_attr_val_set_string(&this->data_ptr->timeline_attrs[TID_IDX_MODEL_NAME].val, this->data_ptr->model_name.c_str());
         this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
 
@@ -505,7 +511,7 @@ void Tracing::PostUpdate(
     if(this->data_ptr->trace_contact_collision)
     {
         auto contacts = ecm.Component<gz::sim::components::ContactSensorData>(this->data_ptr->collision_entity);
-        if(contacts != NULL) 
+        if(contacts != NULL)
         {
             if(contacts->Data().contact_size() > 0)
             {
