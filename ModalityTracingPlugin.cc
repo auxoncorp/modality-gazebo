@@ -29,7 +29,7 @@ using namespace modality;
 
 #define NS_PER_SEC (1000000000ULL)
 
-const char TIME_DOMAIN[] = "gazebo-clock";
+const char TIME_DOMAIN[] = "gazebo-simulator-clock";
 const char CLOCK_STYLE[] = "relative";
 
 const char ENV_AUTH_TOKEN[] = "MODALITY_AUTH_TOKEN";
@@ -44,6 +44,7 @@ const char SDF_TRACE_POSE[] = "pose";
 const char SDF_TRACE_LIN_ACCEL[] = "linear_acceleration";
 const char SDF_TRACE_LIN_VEL[] = "linear_velocity";
 const char SDF_TRACE_CONTACT_COLLISION[] = "contact_collision";
+const char SDF_STEP_SIZE[] = "step_size";
 
 const char EVENT_NAME_POSE[] = "pose";
 const char EVENT_NAME_LINEAR_VEL[] = "linear_velocity";
@@ -62,7 +63,8 @@ const char ERR_EVENT_SEND[] = "Failed to send event";
 #define TID_IDX_MODEL_ENTITY (5)
 #define TID_IDX_LINK_NAME (6)
 #define TID_IDX_LINK_ENTITY (7)
-#define NUM_TIMELINE_ATTRS (8)
+#define TID_IDX_STEP_SIZE (8)
+#define NUM_TIMELINE_ATTRS (9)
 static const char *TIMELINE_ATTR_KEYS[] =
 {
     "timeline.run_id",
@@ -73,32 +75,38 @@ static const char *TIMELINE_ATTR_KEYS[] =
     "timeline.internal.gazebo.model.entity",
     "timeline.internal.gazebo.link.name",
     "timeline.internal.gazebo.link.entity",
+    "timeline.internal.gazebo.step_size",
 };
 
 #define EID_IDX_COLLISION_NAME (0)
 #define EID_IDX_COLLISION_ENTITY (1)
 #define EID_IDX_NAME (2)
 #define EID_IDX_TIMESTAMP (3)
-#define EID_IDX_X (4)
-#define EID_IDX_Y (5)
-#define EID_IDX_Z (6)
-#define EID_IDX_ROLL (7)
-#define EID_IDX_PITCH (8)
-#define EID_IDX_YAW (9)
+#define EID_IDX_SIM_TIME (4)
+#define EID_IDX_WALL_CLOCK_TIME (5)
+#define EID_IDX_X (6)
+#define EID_IDX_Y (7)
+#define EID_IDX_Z (8)
+#define EID_IDX_ROLL (9)
+#define EID_IDX_PITCH (10)
+#define EID_IDX_YAW (11)
 
-#define NUM_EVENT_ATTRS (10)
-#define NUM_EVENT_ATTRS_POSE (2 + 3 + 3)
-#define NUM_EVENT_ATTRS_LINEAR_VEL (2 + 3)
-#define NUM_EVENT_ATTRS_LINEAR_ACCEL (2 + 3)
-#define NUM_EVENT_ATTRS_CONTACT (2 + 2)
+#define NUM_EVENT_ATTRS (12)
+// First 4 event attrs always name, timestmap, gz_wct, gz_st
+#define NUM_EVENT_ATTRS_POSE (4 + 3 + 3)
+#define NUM_EVENT_ATTRS_LINEAR_VEL (4 + 3)
+#define NUM_EVENT_ATTRS_LINEAR_ACCEL (4 + 3)
+#define NUM_EVENT_ATTRS_CONTACT (4 + 2)
 
-// Ordered such that 0..4 and 4..10 can be contiguous arrays
+// Ordered such that 0..=5, 2..=8, and 2..=11 can be contiguous arrays
 static const char *EVENT_ATTR_KEYS[] =
 {
     "event.collision.name",
     "event.collision.entity",
     "event.name",
     "event.timestamp",
+    "event.internal.gazebo.simulation_time",
+    "event.internal.gazebo.wall_clock_time",
     "event.x",
     "event.y",
     "event.z",
@@ -106,6 +114,14 @@ static const char *EVENT_ATTR_KEYS[] =
     "event.pitch",
     "event.yaw",
 };
+
+static inline uint64_t dur_to_ns(std::chrono::steady_clock::duration dur)
+{
+    auto sec_nsec = gz::math::durationToSecNsec(dur);
+    uint64_t ts_ns = ((uint64_t) sec_nsec.first) * NS_PER_SEC;
+    ts_ns += (uint64_t) sec_nsec.second;
+    return ts_ns;
+}
 
 class modality_gz::TracingPrivate
 {
@@ -181,6 +197,7 @@ void Tracing::Configure(
 {
     int err;
     int i;
+    double step_size;
 
     this->data_ptr->entity = entity;
     this->data_ptr->model_name = gz::sim::scopedName(entity, ecm, "::", false);
@@ -254,6 +271,9 @@ void Tracing::Configure(
         {
             this->data_ptr->trace_contact_collision = sdf->Get<bool>(SDF_TRACE_CONTACT_COLLISION);
         }
+
+        auto default_step_size = sdf->Get<double>(SDF_STEP_SIZE, 0.001);
+        step_size = default_step_size.first;
     }
 
     // Setup the client if config checks out
@@ -356,6 +376,9 @@ void Tracing::Configure(
         this->data_ptr->HandleClientError(err, "Failed to set link entity big int value");
         err = modality_attr_val_set_big_int(&this->data_ptr->timeline_attrs[TID_IDX_LINK_ENTITY].val, &this->data_ptr->link_entity);
         this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
+        
+        err = modality_attr_val_set_float(&this->data_ptr->timeline_attrs[TID_IDX_STEP_SIZE].val, step_size);
+        this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
 
         err = modality_ingest_client_timeline_metadata(this->data_ptr->client, this->data_ptr->timeline_attrs, NUM_TIMELINE_ATTRS);
         this->data_ptr->HandleClientError(err, "Failed to send timeline metadata");
@@ -382,13 +405,16 @@ void Tracing::PostUpdate(
 
     bool model_is_static = model.Static(ecm);
 
-    auto sec_nsec = gz::math::durationToSecNsec(info.simTime);
-    uint64_t ts_ns = ((uint64_t) sec_nsec.first) * NS_PER_SEC;
-    ts_ns += (uint64_t) sec_nsec.second;
     this->data_ptr->current_time = info.simTime;
+    const uint64_t sim_time_ns = dur_to_ns(info.simTime);
+    const uint64_t wall_clock_time_ns = dur_to_ns(info.realTime);
 
-    err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs[EID_IDX_TIMESTAMP].val, ts_ns);
+    err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs[EID_IDX_TIMESTAMP].val, sim_time_ns);
     this->data_ptr->HandleClientError(err, "Failed to set event timestamp attribute value");
+    err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs[EID_IDX_SIM_TIME].val, sim_time_ns);
+    this->data_ptr->HandleClientError(err, "Failed to set event sim time attribute value");
+    err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs[EID_IDX_WALL_CLOCK_TIME].val, wall_clock_time_ns);
+    this->data_ptr->HandleClientError(err, "Failed to set event wall clock time attribute value");
 
     if(this->data_ptr->trace_pose)
     {
