@@ -45,6 +45,7 @@ const char SDF_TRACE_LIN_ACCEL[] = "linear_acceleration";
 const char SDF_TRACE_LIN_VEL[] = "linear_velocity";
 const char SDF_TRACE_CONTACT_COLLISION[] = "contact_collision";
 const char SDF_STEP_SIZE[] = "step_size";
+const char SDF_COLLISION_NAME[] = "collision_name";
 
 const char EVENT_NAME_POSE[] = "pose";
 const char EVENT_NAME_LINEAR_VEL[] = "linear_velocity";
@@ -198,6 +199,7 @@ void Tracing::Configure(
     int err;
     int i;
     double step_size;
+    std::string collision_name;
 
     this->data_ptr->entity = entity;
     this->data_ptr->model_name = gz::sim::scopedName(entity, ecm, "::", false);
@@ -272,6 +274,15 @@ void Tracing::Configure(
             this->data_ptr->trace_contact_collision = sdf->Get<bool>(SDF_TRACE_CONTACT_COLLISION);
         }
 
+        if(sdf->HasElement(SDF_COLLISION_NAME))
+        {
+            collision_name = sdf->Get<std::string>(SDF_COLLISION_NAME);
+        }
+        else
+        {
+            collision_name = "collision";
+        }
+
         auto default_step_size = sdf->Get<double>(SDF_STEP_SIZE, 0.001);
         step_size = default_step_size.first;
     }
@@ -288,11 +299,12 @@ void Tracing::Configure(
         // Get entity handle to collision, if present
         if(this->data_ptr->trace_contact_collision)
         {
-            this->data_ptr->collision_entity = link.CollisionByName(ecm, "collision");
+            this->data_ptr->collision_entity = link.CollisionByName(ecm, collision_name);
             if(this->data_ptr->collision_entity == gz::sim::kNullEntity)
             {
                 this->data_ptr->trace_contact_collision = false;
-                gzerr << "Could not find contact sensor with collision on link '" << this->data_ptr->link_name << "'" << std::endl;
+                gzerr << "Could not find contact sensor with collision name '"
+                    << collision_name << "'" << "on link '" << this->data_ptr->link_name << "'" << std::endl;
             }
         }
 
