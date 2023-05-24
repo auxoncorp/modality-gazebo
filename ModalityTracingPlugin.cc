@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <chrono>
 
 #include <gz/plugin/Register.hh>
 #include <gz/sim/Util.hh>
@@ -30,7 +31,7 @@ using namespace modality;
 #define NS_PER_SEC (1000000000ULL)
 
 const char TIME_DOMAIN[] = "gazebo-simulator-clock";
-const char CLOCK_STYLE[] = "relative";
+const char CLOCK_STYLE[] = "utc";
 
 const char ENV_AUTH_TOKEN[] = "MODALITY_AUTH_TOKEN";
 const char ENV_RUN_ID[] = "MODALITY_RUN_ID";
@@ -388,7 +389,7 @@ void Tracing::Configure(
         this->data_ptr->HandleClientError(err, "Failed to set link entity big int value");
         err = modality_attr_val_set_big_int(&this->data_ptr->timeline_attrs[TID_IDX_LINK_ENTITY].val, &this->data_ptr->link_entity);
         this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
-        
+
         err = modality_attr_val_set_float(&this->data_ptr->timeline_attrs[TID_IDX_STEP_SIZE].val, step_size);
         this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
 
@@ -402,6 +403,9 @@ void Tracing::PostUpdate(
         const gz::sim::EntityComponentManager &ecm)
 {
     int err;
+    std::chrono::time_point now = std::chrono::time_point_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now()
+    );
 
     bool not_tracing = !this->data_ptr->tracing_enabled || info.paused;
     bool no_data_selected = !(this->data_ptr->trace_pose || this->data_ptr->trace_linear_vel || this->data_ptr->trace_linear_accel);
@@ -421,7 +425,8 @@ void Tracing::PostUpdate(
     const uint64_t sim_time_ns = dur_to_ns(info.simTime);
     const uint64_t wall_clock_time_ns = dur_to_ns(info.realTime);
 
-    err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs[EID_IDX_TIMESTAMP].val, sim_time_ns);
+    std::chrono::duration now_ns = now.time_since_epoch();
+    err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs[EID_IDX_TIMESTAMP].val, now_ns.count());
     this->data_ptr->HandleClientError(err, "Failed to set event timestamp attribute value");
     err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs[EID_IDX_SIM_TIME].val, sim_time_ns);
     this->data_ptr->HandleClientError(err, "Failed to set event sim time attribute value");
