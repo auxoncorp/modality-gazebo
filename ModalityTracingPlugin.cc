@@ -257,17 +257,17 @@ void Tracing::Configure(
             this->data_ptr->allow_insecure_tls = sdf->Get<bool>(SDF_INSECURE_TLS);
         }
 
-        if(const char *ingest_url = std::getenv(ENV_INGEST_URL))
-        {
-            this->data_ptr->ingest_parent_url = ingest_url;
-        }
-        else if(sdf->HasElement(SDF_INGEST_URL))
+        if(sdf->HasElement(SDF_INGEST_URL))
         {
             this->data_ptr->ingest_parent_url = sdf->Get<std::string>(SDF_INGEST_URL);
         }
         else if(sdf->HasElement(SDF_MODALITYD_URL))
         {
             this->data_ptr->ingest_parent_url = sdf->Get<std::string>(SDF_MODALITYD_URL);
+        }
+        else if(const char *ingest_url = std::getenv(ENV_INGEST_URL))
+        {
+            this->data_ptr->ingest_parent_url = ingest_url;
         }
 
         if(sdf->HasElement(SDF_TRACE_POSE))
