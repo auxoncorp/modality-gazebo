@@ -88,21 +88,22 @@ static const char *TIMELINE_ATTR_KEYS[] =
 #define EID_IDX_TIMESTAMP (3)
 #define EID_IDX_SIM_TIME (4)
 #define EID_IDX_WALL_CLOCK_TIME (5)
-#define EID_IDX_X (6)
-#define EID_IDX_Y (7)
-#define EID_IDX_Z (8)
-#define EID_IDX_ROLL (9)
-#define EID_IDX_PITCH (10)
-#define EID_IDX_YAW (11)
+#define EID_IDX_ITERATIONS (6)
+#define EID_IDX_X (7)
+#define EID_IDX_Y (8)
+#define EID_IDX_Z (9)
+#define EID_IDX_ROLL (10)
+#define EID_IDX_PITCH (11)
+#define EID_IDX_YAW (12)
 
-#define NUM_EVENT_ATTRS (12)
-// First 4 event attrs always name, timestmap, gz_wct, gz_st
-#define NUM_EVENT_ATTRS_POSE (4 + 3 + 3)
-#define NUM_EVENT_ATTRS_LINEAR_VEL (4 + 3)
-#define NUM_EVENT_ATTRS_LINEAR_ACCEL (4 + 3)
-#define NUM_EVENT_ATTRS_CONTACT (4 + 2)
+#define NUM_EVENT_ATTRS (13)
+// First 5 event attrs always name, timestmap, gz_wct, gz_st, gz_iters
+#define NUM_EVENT_ATTRS_POSE (5 + 3 + 3)
+#define NUM_EVENT_ATTRS_LINEAR_VEL (5 + 3)
+#define NUM_EVENT_ATTRS_LINEAR_ACCEL (5 + 3)
+#define NUM_EVENT_ATTRS_CONTACT (5 + 2)
 
-// Ordered such that 0..=5, 2..=8, and 2..=11 can be contiguous arrays
+// Ordered such that 0..=6, 2..=9, and 2..=12 can be contiguous arrays
 static const char *EVENT_ATTR_KEYS[] =
 {
     "event.collision.name",
@@ -111,6 +112,7 @@ static const char *EVENT_ATTR_KEYS[] =
     "event.timestamp",
     "event.internal.gazebo.simulation_time",
     "event.internal.gazebo.wall_clock_time",
+    "event.internal.gazebo.iterations",
     "event.x",
     "event.y",
     "event.z",
@@ -153,6 +155,7 @@ class modality_gz::TracingPrivate
 
         struct modality_big_int link_entity;
         struct modality_big_int model_entity;
+        struct modality_big_int sim_iters;
         uint64_t ordering{0};
         struct modality_runtime *rt{NULL};
         struct modality_ingest_client *client{NULL};
@@ -442,6 +445,11 @@ void Tracing::PostUpdate(
     this->data_ptr->HandleClientError(err, "Failed to set event sim time attribute value");
     err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs[EID_IDX_WALL_CLOCK_TIME].val, wall_clock_time_ns);
     this->data_ptr->HandleClientError(err, "Failed to set event wall clock time attribute value");
+
+    err = modality_big_int_set(&this->data_ptr->sim_iters, info.iterations, 0);
+    this->data_ptr->HandleClientError(err, "Failed to set sim iterations big int value");
+    err = modality_attr_val_set_big_int(&this->data_ptr->event_attrs[EID_IDX_ITERATIONS].val, &this->data_ptr->sim_iters);
+    this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
 
     if(this->data_ptr->trace_pose)
     {
