@@ -34,13 +34,15 @@ const char TIME_DOMAIN[] = "gazebo-simulator-clock";
 const char CLOCK_STYLE[] = "utc";
 
 const char ENV_AUTH_TOKEN[] = "MODALITY_AUTH_TOKEN";
+const char ENV_INGEST_URL[] = "INGEST_PROTOCOL_PARENT_URL";
 const char ENV_RUN_ID[] = "MODALITY_RUN_ID";
 
 const char SDF_LINK_NAME[] = "link_name";
 const char SDF_AUTH_TOKEN[] = "auth_token";
 const char SDF_TIMELINE_NAME[] = "timeline_name";
 const char SDF_INSECURE_TLS[] = "allow_insecure_tls";
-const char SDF_MODALITYD_URL[] = "modalityd_url";
+const char SDF_MODALITYD_URL[] = "modalityd_url"; // deprecated, use ingest_parent_url instead
+const char SDF_INGEST_URL[] = "ingest_parent_url";
 const char SDF_TRACE_POSE[] = "pose";
 const char SDF_TRACE_LIN_ACCEL[] = "linear_acceleration";
 const char SDF_TRACE_LIN_VEL[] = "linear_velocity";
@@ -144,7 +146,7 @@ class modality_gz::TracingPrivate
 
         std::string auth_token;
         std::string timeline_name;
-        std::string modalityd_url{"modality-ingest://localhost:14182"};
+        std::string ingest_parent_url{"modality-ingest://localhost:14182"};
         std::string model_name;
         std::string link_name;
         std::string run_id;
@@ -250,9 +252,17 @@ void Tracing::Configure(
             this->data_ptr->allow_insecure_tls = sdf->Get<bool>(SDF_INSECURE_TLS);
         }
 
-        if(sdf->HasElement(SDF_MODALITYD_URL))
+        if(const char *ingest_url = std::getenv(ENV_INGEST_URL))
         {
-            this->data_ptr->modalityd_url = sdf->Get<std::string>(SDF_MODALITYD_URL);
+            this->data_ptr->ingest_parent_url = ingest_url;
+        }
+        else if(sdf->HasElement(SDF_INGEST_URL))
+        {
+            this->data_ptr->ingest_parent_url = sdf->Get<std::string>(SDF_INGEST_URL);
+        }
+        else if(sdf->HasElement(SDF_MODALITYD_URL))
+        {
+            this->data_ptr->ingest_parent_url = sdf->Get<std::string>(SDF_MODALITYD_URL);
         }
 
         if(sdf->HasElement(SDF_TRACE_POSE))
@@ -320,7 +330,7 @@ void Tracing::Configure(
     {
         err = modality_ingest_client_connect(
                 this->data_ptr->client,
-                this->data_ptr->modalityd_url.c_str(),
+                this->data_ptr->ingest_parent_url.c_str(),
                 this->data_ptr->allow_insecure_tls);
         this->data_ptr->HandleClientError(err, "Failed to connect");
 
