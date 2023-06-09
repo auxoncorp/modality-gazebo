@@ -49,6 +49,7 @@ const char SDF_TRACE_LIN_VEL[] = "linear_velocity";
 const char SDF_TRACE_CONTACT_COLLISION[] = "contact_collision";
 const char SDF_STEP_SIZE[] = "step_size";
 const char SDF_COLLISION_NAME[] = "collision_name";
+const char SDF_SAMPLE_N_ITERS[] = "sample_n_iters";
 
 const char EVENT_NAME_POSE[] = "pose";
 const char EVENT_NAME_LINEAR_VEL[] = "linear_velocity";
@@ -145,6 +146,7 @@ class modality_gz::TracingPrivate
         bool trace_linear_vel{true};
         bool trace_contact_collision{false};
         bool allow_insecure_tls{true};
+        uint64_t sample_n_iters{0};
 
         std::string auth_token;
         std::string timeline_name;
@@ -299,6 +301,9 @@ void Tracing::Configure(
 
         auto default_step_size = sdf->Get<double>(SDF_STEP_SIZE, 0.001);
         step_size = default_step_size.first;
+
+        auto sample_n_iters = sdf->Get<uint64_t>(SDF_SAMPLE_N_ITERS, 0);
+        this->data_ptr->sample_n_iters = sample_n_iters.first;
     }
 
     // Setup the client if config checks out
@@ -427,6 +432,16 @@ void Tracing::PostUpdate(
     {
         // Not tracing or paused
         return;
+    }
+
+    // Always log the first iteration
+    if((this->data_ptr->sample_n_iters != 0) && (info.iterations != 1))
+    {
+        if((info.iterations % this->data_ptr->sample_n_iters) != 0)
+        {
+            // Skip
+            return;
+        }
     }
 
     gz::sim::Model model{this->data_ptr->entity};

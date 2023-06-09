@@ -103,6 +103,7 @@
               <linear_velocity>true</linear_velocity>
               <contact_collision>true</contact_collision>
               <collision_name>chassis_collision</collision_name>
+              <!-- <sample_n_iters>1000</sample_n_iters> -->
           </plugin>
 
             <pose relative_to='world'>0 0 0 0 0 0</pose>   <!--the pose is relative to the world by default-->
