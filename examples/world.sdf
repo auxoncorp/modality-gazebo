@@ -92,7 +92,7 @@
           <plugin
               name='modality_gz::Tracing'
               filename='ModalityTracingPlugin'>
-              <enabled>true</enabled>
+              <enabled>false</enabled>
               <!-- <auth_token>YOUR_AUTH_TOKEN_HEX_HERE</auth_token> -->
               <timeline_name>robot_chassis</timeline_name>
               <allow_insecure_tls>true</allow_insecure_tls>
@@ -103,7 +103,16 @@
               <linear_velocity>true</linear_velocity>
               <contact_collision>true</contact_collision>
               <collision_name>chassis_collision</collision_name>
-              <!-- <sample_n_iters>1000</sample_n_iters> -->
+              <sample_n_iters>100</sample_n_iters>
+          </plugin>
+          <plugin
+              name='modality_gz::Mutators'
+              filename='ModalityMutatorsPlugin'>
+              <enabled>true</enabled>
+              <!-- <auth_token>YOUR_AUTH_TOKEN_HEX_HERE</auth_token> -->
+              <allow_insecure_tls>true</allow_insecure_tls>
+              <mutation_parent_url>modality-mutation://localhost:14192</mutation_parent_url>
+              <link_name>chassis</link_name>
           </plugin>
 
             <pose relative_to='world'>0 0 0 0 0 0</pose>   <!--the pose is relative to the world by default-->

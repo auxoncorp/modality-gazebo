@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.10.2 FATAL_ERROR)
 
-project(ModalityTracingPlugin)
+project(ModalityPlugins)
+
+set(MODALITY_SDK_INCLUDE_DIR "" CACHE FILEPATH "Path to local Modality SDK include directory")
+set(MODALITY_SDK_LIB_DIR "" CACHE FILEPATH "Path to local Modality SDK lib directory")
+
+if(EXISTS ${MODALITY_SDK_INCLUDE_DIR})
+    include_directories(SYSTEM ${MODALITY_SDK_INCLUDE_DIR})
+endif()
+
+if(EXISTS ${MODALITY_SDK_LIB_DIR})
+    link_directories(${MODALITY_SDK_LIB_DIR})
+endif()
 
 find_package(gz-cmake3 REQUIRED)
 
@@ -10,10 +21,18 @@ set(GZ_PLUGIN_VER ${gz-plugin2_VERSION_MAJOR})
 find_package(gz-sim7 REQUIRED)
 
 add_library(ModalityTracingPlugin SHARED ModalityTracingPlugin.cc)
-
 set_property(TARGET ModalityTracingPlugin PROPERTY CXX_STANDARD 17)
+target_link_libraries(
+    ModalityTracingPlugin
+    PRIVATE
+    gz-plugin${GZ_PLUGIN_VER}::gz-plugin${GZ_PLUGIN_VER}
+    gz-sim7::gz-sim7
+    modality)
 
-target_link_libraries(ModalityTracingPlugin
+add_library(ModalityMutatorsPlugin SHARED ModalityMutatorsPlugin.cc ForceMutator.cc)
+set_property(TARGET ModalityMutatorsPlugin PROPERTY CXX_STANDARD 17)
+target_link_libraries(
+    ModalityMutatorsPlugin
     PRIVATE
     gz-plugin${GZ_PLUGIN_VER}::gz-plugin${GZ_PLUGIN_VER}
     gz-sim7::gz-sim7
@@ -21,7 +40,9 @@ target_link_libraries(ModalityTracingPlugin
 
 add_custom_target(
     run-example
-    DEPENDS ModalityTracingPlugin)
+    DEPENDS
+    ModalityTracingPlugin
+    ModalityMutatorsPlugin)
 
 add_custom_command(
     TARGET run-example
