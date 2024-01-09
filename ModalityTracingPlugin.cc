@@ -11,6 +11,11 @@
 #include <gz/sim/components/ContactSensor.hh>
 #include <gz/sim/components/ContactSensorData.hh>
 
+// prototyping
+#include <gz/transport/Node.hh>
+#include <gz/msgs/imu.pb.h>
+#include <gz/msgs/twist.pb.h>
+
 #include "ModalityTracingPlugin.hh"
 
 #include "modality/error.h"
@@ -50,6 +55,12 @@ const char SDF_TRACE_CONTACT_COLLISION[] = "contact_collision";
 const char SDF_STEP_SIZE[] = "step_size";
 const char SDF_COLLISION_NAME[] = "collision_name";
 const char SDF_SAMPLE_N_ITERS[] = "sample_n_iters";
+
+// TODO prototyping
+const char SDF_SUBSCRIBED_INTERACTION_TOPICS[] = "subscribed_interaction_topics";
+const char SDF_PUBLISHED_INTERACTION_TOPICS[] = "published_interaction_topics";
+const char EVENT_NAME_RECV_MSG[] = "receive_message";
+const char EVENT_NAME_PUB_MSG[] = "publish_message";
 
 const char EVENT_NAME_POSE[] = "pose";
 const char EVENT_NAME_LINEAR_VEL[] = "linear_velocity";
@@ -122,6 +133,20 @@ static const char *EVENT_ATTR_KEYS[] =
     "event.yaw",
 };
 
+// TODO prototyping
+#define EID_ALT_IDX_SEQNUM (0)
+#define EID_ALT_IDX_TOPIC_NAME (1)
+#define NUM_EVENT_ATTRS_ALT (6)
+static const char *EVENT_ATTR_KEYS_ALT[] =
+{
+    "event.seqnum",
+    "event.topic",
+    "event.name",
+    "event.timestamp",
+    "event.internal.gazebo.simulation_time",
+    "event.internal.gazebo.wall_clock_time",
+};
+
 static inline uint64_t dur_to_ns(std::chrono::steady_clock::duration dur)
 {
     auto sec_nsec = gz::math::durationToSecNsec(dur);
@@ -165,6 +190,16 @@ class modality_gz::TracingPrivate
         modality_timeline_id tid;
         modality_attr timeline_attrs[NUM_TIMELINE_ATTRS];
         modality_attr event_attrs[NUM_EVENT_ATTRS];
+
+        // TODO prototyping
+        gz::transport::Node node;
+        modality_attr event_attrs_alt[NUM_EVENT_ATTRS_ALT];
+        std::string pub_interactions_topic;
+        std::vector<gz::msgs::IMU> pub_interactions_queue;
+        std::mutex pub_interactions_queue_mutex;
+        std::string sub_interactions_topic;
+        std::vector<gz::msgs::Twist> sub_interactions_queue;
+        std::mutex sub_interactions_queue_mutex;
 };
 
 void TracingPrivate::HandleClientError(int err, const char *msg)
@@ -214,6 +249,20 @@ void Tracing::Configure(
 
     auto sdf_tracing_enabled = sdf->Get<bool>("enabled", true);
     this->data_ptr->tracing_enabled = sdf_tracing_enabled.first;
+
+    auto pub_msg_cb = std::function<void(const gz::msgs::IMU &)>(
+        [this](const gz::msgs::IMU &msg)
+        {
+            std::lock_guard<std::mutex> lock(this->data_ptr->pub_interactions_queue_mutex);
+            this->data_ptr->pub_interactions_queue.push_back(msg);
+        });
+
+    auto sub_msg_cb = std::function<void(const gz::msgs::Twist &)>(
+        [this](const gz::msgs::Twist &msg)
+        {
+            std::lock_guard<std::mutex> lock(this->data_ptr->sub_interactions_queue_mutex);
+            this->data_ptr->sub_interactions_queue.push_back(msg);
+        });
 
     // Load up configs from the SDF
     if(this->data_ptr->tracing_enabled)
@@ -304,6 +353,31 @@ void Tracing::Configure(
 
         auto sample_n_iters = sdf->Get<uint64_t>(SDF_SAMPLE_N_ITERS, 0);
         this->data_ptr->sample_n_iters = sample_n_iters.first;
+
+        // TODO prototyping
+        auto pub_topic_name = gz::transport::TopicUtils::AsValidTopic(sdf->Get<std::string>(SDF_PUBLISHED_INTERACTION_TOPICS));
+        if(!pub_topic_name.empty())
+        {
+            this->data_ptr->pub_interactions_topic = pub_topic_name;
+            if(!this->data_ptr->node.Subscribe(pub_topic_name, pub_msg_cb))
+            {
+                gzerr << "Subscriber could not be created for topic ["
+                    << pub_topic_name << "] with message type [IMU]" << std::endl;
+                return;
+            }
+        }
+
+        auto sub_topic_name = gz::transport::TopicUtils::AsValidTopic(sdf->Get<std::string>(SDF_SUBSCRIBED_INTERACTION_TOPICS));
+        if(!sub_topic_name.empty())
+        {
+            this->data_ptr->sub_interactions_topic = sub_topic_name;
+            if(!this->data_ptr->node.Subscribe(sub_topic_name, sub_msg_cb))
+            {
+                gzerr << "Subscriber could not be created for topic ["
+                    << pub_topic_name << "] with message type [Twist]" << std::endl;
+                return;
+            }
+        }
     }
 
     // Setup the client if config checks out
@@ -369,6 +443,16 @@ void Tracing::Configure(
             this->data_ptr->HandleClientError(err, "Failed to declare event attribute key");
         }
 
+        // TODO prototyping
+        for(i = 0; i < NUM_EVENT_ATTRS_ALT; i += 1)
+        {
+            err = modality_ingest_client_declare_attr_key(
+                    this->data_ptr->client,
+                    EVENT_ATTR_KEYS_ALT[i],
+                    &this->data_ptr->event_attrs_alt[i].key);
+            this->data_ptr->HandleClientError(err, "Failed to declare alt event attribute key");
+        }
+
         err = modality_attr_val_set_string(&this->data_ptr->timeline_attrs[TID_IDX_NAME].val, this->data_ptr->timeline_name.c_str());
         this->data_ptr->HandleClientError(err, ERR_TIMELINE_ATTR_VAL);
 
@@ -421,11 +505,100 @@ void Tracing::PostUpdate(
         const gz::sim::EntityComponentManager &ecm)
 {
     int err;
+
+    gz::sim::Model model{this->data_ptr->entity};
+    gz::sim::Link link{model.LinkByName(ecm, this->data_ptr->link_name)};
+
+    bool model_is_static = model.Static(ecm);
     std::chrono::time_point now = std::chrono::time_point_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now()
     );
 
+    const uint64_t sim_time_ns = dur_to_ns(info.simTime);
+    const uint64_t wall_clock_time_ns = dur_to_ns(info.realTime);
+
     bool not_tracing = !this->data_ptr->tracing_enabled || info.paused;
+
+    // TODO prototyping
+    {
+        std::lock_guard<std::mutex> lock1(this->data_ptr->sub_interactions_queue_mutex);
+        for(auto msg = std::begin(this->data_ptr->sub_interactions_queue); msg != std::end(this->data_ptr->sub_interactions_queue);)
+        {
+            std::string native_seqnum = msg->header().data(0).value(0);
+            int64_t seqnum = stoi(native_seqnum);
+            uint64_t ts_ns = sim_time_ns; // TODO
+
+            err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs_alt[EID_IDX_TIMESTAMP].val, ts_ns);
+            this->data_ptr->HandleClientError(err, "Failed to set event timestamp attribute value");
+            err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs_alt[EID_IDX_SIM_TIME].val, ts_ns);
+            this->data_ptr->HandleClientError(err, "Failed to set event sim time attribute value");
+            err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs_alt[EID_IDX_WALL_CLOCK_TIME].val, wall_clock_time_ns);
+            this->data_ptr->HandleClientError(err, "Failed to set event wall clock time attribute value");
+
+            err = modality_attr_val_set_string(&this->data_ptr->event_attrs_alt[EID_IDX_NAME].val, EVENT_NAME_RECV_MSG);
+            this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
+
+            err = modality_attr_val_set_string(
+                    &this->data_ptr->event_attrs_alt[EID_ALT_IDX_TOPIC_NAME].val,
+                    this->data_ptr->sub_interactions_topic.c_str());
+            this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
+
+            err = modality_attr_val_set_integer(&this->data_ptr->event_attrs_alt[EID_ALT_IDX_SEQNUM].val, seqnum);
+            this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
+
+            err = modality_ingest_client_event(
+                    this->data_ptr->client,
+                    this->data_ptr->ordering,
+                    0,
+                    &this->data_ptr->event_attrs_alt[0],
+                    NUM_EVENT_ATTRS_ALT);
+            this->data_ptr->HandleClientError(err, ERR_EVENT_SEND);
+
+            this->data_ptr->ordering += 1;
+            msg = this->data_ptr->sub_interactions_queue.erase(msg);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock1(this->data_ptr->pub_interactions_queue_mutex);
+        for(auto msg = std::begin(this->data_ptr->pub_interactions_queue); msg != std::end(this->data_ptr->pub_interactions_queue);)
+        {
+            std::string native_seqnum = msg->header().data(1).value(0);
+            int64_t seqnum = stoi(native_seqnum);
+            auto timestamp = msg->header().stamp();
+            uint64_t ts_ns = ((uint64_t) timestamp.sec()) * NS_PER_SEC;
+            ts_ns += (uint64_t) timestamp.nsec();
+
+            err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs_alt[EID_IDX_TIMESTAMP].val, ts_ns);
+            this->data_ptr->HandleClientError(err, "Failed to set event timestamp attribute value");
+            err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs_alt[EID_IDX_SIM_TIME].val, ts_ns);
+            this->data_ptr->HandleClientError(err, "Failed to set event sim time attribute value");
+            err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs_alt[EID_IDX_WALL_CLOCK_TIME].val, wall_clock_time_ns);
+            this->data_ptr->HandleClientError(err, "Failed to set event wall clock time attribute value");
+
+            err = modality_attr_val_set_string(&this->data_ptr->event_attrs_alt[EID_IDX_NAME].val, EVENT_NAME_PUB_MSG);
+            this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
+
+            err = modality_attr_val_set_string(
+                    &this->data_ptr->event_attrs_alt[EID_ALT_IDX_TOPIC_NAME].val,
+                    this->data_ptr->pub_interactions_topic.c_str());
+            this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
+
+            err = modality_attr_val_set_integer(&this->data_ptr->event_attrs_alt[EID_ALT_IDX_SEQNUM].val, seqnum);
+            this->data_ptr->HandleClientError(err, ERR_EVENT_ATTR_VAL);
+
+            err = modality_ingest_client_event(
+                    this->data_ptr->client,
+                    this->data_ptr->ordering,
+                    0,
+                    &this->data_ptr->event_attrs_alt[0],
+                    NUM_EVENT_ATTRS_ALT);
+            this->data_ptr->HandleClientError(err, ERR_EVENT_SEND);
+
+            this->data_ptr->ordering += 1;
+            msg = this->data_ptr->pub_interactions_queue.erase(msg);
+        }
+    }
+
     bool no_data_selected = !(this->data_ptr->trace_pose || this->data_ptr->trace_linear_vel || this->data_ptr->trace_linear_accel);
 
     if(not_tracing || no_data_selected || (this->data_ptr->current_time == info.simTime))
@@ -444,14 +617,7 @@ void Tracing::PostUpdate(
         }
     }
 
-    gz::sim::Model model{this->data_ptr->entity};
-    gz::sim::Link link{model.LinkByName(ecm, this->data_ptr->link_name)};
-
-    bool model_is_static = model.Static(ecm);
-
     this->data_ptr->current_time = info.simTime;
-    const uint64_t sim_time_ns = dur_to_ns(info.simTime);
-    const uint64_t wall_clock_time_ns = dur_to_ns(info.realTime);
 
     std::chrono::duration now_ns = now.time_since_epoch();
     err = modality_attr_val_set_timestamp(&this->data_ptr->event_attrs[EID_IDX_TIMESTAMP].val, now_ns.count());
